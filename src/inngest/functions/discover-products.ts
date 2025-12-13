@@ -1,14 +1,18 @@
 import { eq } from 'drizzle-orm'
+import Groq from 'groq-sdk'
 import { db } from '../../db'
 import { products, retailerListings, brands, retailers, categories } from '../../db/schema'
 import { inngest } from '../client'
+
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY,
+})
 
 // Retailer category pages to discover products from
 const DISCOVERY_SOURCES = [
   {
     retailerSlug: 'jb-hifi',
     categoryUrl: 'https://www.jbhifi.com.au/collections/computers-tablets/chromebooks',
-    productUrlPattern: /https:\/\/www\.jbhifi\.com\.au\/products\/[a-z0-9-]+/gi,
   },
 ]
 
@@ -46,48 +50,98 @@ async function fetchWithJina(url: string): Promise<string | null> {
   }
 }
 
-function extractProductUrls(content: string, pattern: RegExp): string[] {
-  const matches = content.match(pattern) || []
-  return [...new Set(matches)]
+// Use Groq AI to extract product URLs from category page
+async function extractProductUrls(markdown: string, retailerSlug: string): Promise<string[]> {
+  try {
+    const completion = await groq.chat.completions.create({
+      model: 'llama-3.1-8b-instant',
+      messages: [
+        {
+          role: 'user',
+          content: `Extract all product URLs from this ${retailerSlug} category page. Return JSON: {"urls": ["https://..."]}
+
+Page:
+${markdown.slice(0, 6000)}`,
+        },
+      ],
+      temperature: 0,
+      max_tokens: 2000,
+      response_format: { type: 'json_object' },
+    })
+
+    const content = completion.choices[0]?.message?.content
+    if (!content) return []
+
+    const parsed = JSON.parse(content)
+    const urls = Array.isArray(parsed) ? parsed : (parsed.urls || [])
+    return urls.filter((url: string) => typeof url === 'string' && url.includes('/products/'))
+  } catch (error) {
+    console.error('Failed to extract URLs:', error)
+    return []
+  }
 }
 
-function parseProductPage(content: string): {
+// Use Groq AI to extract product data from individual product page
+async function extractProductData(markdown: string, retailerSlug: string): Promise<{
   name: string
   price: number
   imageUrl: string
   screenSize: string
   ram: number
   storage: number
+  storageType: string
   processor: string
   touchscreen: boolean
   inStock: boolean
-} | null {
-  const nameMatch = content.match(/^#\s*(.+?)(?:\s*-\s*JB Hi-Fi)?$/m)
-  const name = nameMatch ? nameMatch[1].trim() : null
-  if (!name) return null
+} | null> {
+  try {
+    const completion = await groq.chat.completions.create({
+      model: 'llama-3.1-70b-versatile',
+      messages: [
+        {
+          role: 'system',
+          content: `Extract product data from ${retailerSlug}. Use Australian Dollar prices.`,
+        },
+        {
+          role: 'user',
+          content: `Extract Chromebook data as JSON:
+{"name":"Full product name", "price":499, "imageUrl":"https://...", "screenSize":"14", "ram":8, "storage":128, "storageType":"eMMC", "processor":"Intel Celeron N4500", "touchscreen":false, "inStock":true}
 
-  const priceMatch = content.match(/\$([0-9,]+)/)
-  const price = priceMatch ? parseInt(priceMatch[1].replace(/,/g, '')) : 0
-  if (price < 100 || price > 5000) return null
+Rules:
+- price in dollars (499 not 49900)
+- screenSize just the number
+- inStock true only if "Add to Cart" visible and no "Out of Stock"
 
-  const imageMatch = content.match(/https:\/\/www\.jbhifi\.com\.au\/cdn\/shop\/files\/[^\s\)\"]+\.(?:jpg|png|webp)/i)
-  const imageUrl = imageMatch ? imageMatch[0] : ''
+Page:
+${markdown.slice(0, 8000)}`,
+        },
+      ],
+      temperature: 0.1,
+      max_tokens: 500,
+      response_format: { type: 'json_object' },
+    })
 
-  const screenMatch = content.match(/(\d+(?:\.\d+)?)["\u201d\s]*(?:inch)?/i)
-  const ramMatch = content.match(/(\d+)\s*GB\s*RAM/i)
-  const storageMatch = content.match(/(\d+)\s*GB\s*(?:eMMC|SSD|storage)/i)
-  const processorMatch = content.match(/(?:Intel|MediaTek|MTK|AMD|Kompanio)[^\n,\|]+/i)
+    const content = completion.choices[0]?.message?.content
+    if (!content) return null
 
-  return {
-    name,
-    price,
-    imageUrl,
-    screenSize: screenMatch ? screenMatch[1] + '"' : '14"',
-    ram: ramMatch ? parseInt(ramMatch[1]) : 4,
-    storage: storageMatch ? parseInt(storageMatch[1]) : 128,
-    processor: processorMatch ? processorMatch[0].trim() : 'Unknown',
-    touchscreen: /touchscreen/i.test(content),
-    inStock: /add\s*to\s*cart/i.test(content) && !/out\s*of\s*stock/i.test(content),
+    const p = JSON.parse(content)
+    if (!p.name || !p.price) return null
+
+    return {
+      name: p.name,
+      price: typeof p.price === 'number' ? p.price : parseInt(String(p.price).replace(/[^0-9]/g, '')),
+      imageUrl: p.imageUrl || '',
+      screenSize: String(p.screenSize || '14').replace(/[^0-9.]/g, '') + '"',
+      ram: parseInt(p.ram) || 4,
+      storage: parseInt(p.storage) || 64,
+      storageType: p.storageType || 'eMMC',
+      processor: p.processor || 'Unknown',
+      touchscreen: Boolean(p.touchscreen),
+      inStock: Boolean(p.inStock),
+    }
+  } catch (error) {
+    console.error('Failed to extract product:', error)
+    return null
   }
 }
 
@@ -113,7 +167,9 @@ export const discoverProducts = inngest.createFunction(
 
       if (!categoryContent) continue
 
-      const productUrls = extractProductUrls(categoryContent, source.productUrlPattern)
+      const productUrls = await step.run('extract-urls-' + source.retailerSlug, async () => {
+        return await extractProductUrls(categoryContent, source.retailerSlug)
+      })
       discovered += productUrls.length
 
       const existingListings = await step.run('get-existing-' + source.retailerSlug, async () => {
@@ -138,7 +194,7 @@ export const discoverProducts = inngest.createFunction(
         const productData = await step.run('scrape-' + slugify(productUrl), async () => {
           const content = await fetchWithJina(productUrl)
           if (!content) return null
-          const parsed = parseProductPage(content)
+          const parsed = await extractProductData(content, source.retailerSlug)
           if (!parsed) return null
           return { ...parsed, url: productUrl }
         })
@@ -169,7 +225,7 @@ export const discoverProducts = inngest.createFunction(
             storage: productData.storage,
             processor: productData.processor,
             touchscreen: productData.touchscreen,
-            storageType: 'eMMC',
+            storageType: productData.storageType,
           }).returning()
 
           await db.insert(retailerListings).values({
@@ -219,7 +275,9 @@ export const manualDiscovery = inngest.createFunction(
 
       if (!categoryContent) continue
 
-      const productUrls = extractProductUrls(categoryContent, source.productUrlPattern)
+      const productUrls = await step.run('extract-urls-' + source.retailerSlug, async () => {
+        return await extractProductUrls(categoryContent, source.retailerSlug)
+      })
       discovered += productUrls.length
 
       const existingListings = await step.run('get-existing-' + source.retailerSlug, async () => {
@@ -244,7 +302,7 @@ export const manualDiscovery = inngest.createFunction(
         const productData = await step.run('scrape-' + slugify(productUrl), async () => {
           const content = await fetchWithJina(productUrl)
           if (!content) return null
-          const parsed = parseProductPage(content)
+          const parsed = await extractProductData(content, source.retailerSlug)
           if (!parsed) return null
           return { ...parsed, url: productUrl }
         })
@@ -275,7 +333,7 @@ export const manualDiscovery = inngest.createFunction(
             storage: productData.storage,
             processor: productData.processor,
             touchscreen: productData.touchscreen,
-            storageType: 'eMMC',
+            storageType: productData.storageType,
           }).returning()
 
           await db.insert(retailerListings).values({

@@ -145,9 +145,22 @@ bun run db:studio   # Open Drizzle Studio
 - Tailwind v4 with `@theme` block
 - Custom classes: `.card-surface`, `.price-up`, `.price-down`, `.retailer-badge`
 
-## Path Handling (Windows)
-- Bash: Unix paths `/c/code/teamgbg/price-finda`
-- Read/Write/Edit tools: Windows paths `C:\code\teamgbg\price-finda`
+## CRITICAL: Path Handling (Windows Bug Workaround)
+There is a known Claude Code bug on Windows where file edits fail with "File has been unexpectedly modified" errors. The root cause is path format mismatch in the cache.
+
+**MANDATORY**: Always use Windows backslash paths for Read/Edit/Write/Glob/Grep tools:
+- Correct: `C:\code\price-finda\src\file.ts`
+- Wrong: `C:/code/price-finda/src/file.ts`
+
+Bash tool uses Unix paths: `/c/code/price-finda`
+
+## Task Tracking
+**IMPORTANT**: When the user gives instructions or asks for features:
+1. Immediately add todo items for all requested tasks
+2. Break complex tasks into smaller steps
+3. Mark tasks as in_progress when starting
+4. Mark tasks as completed when done
+5. Keep the user informed of progress
 
 ## Never Do
 - Use npm (always use bun)
