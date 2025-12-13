@@ -1,4 +1,4 @@
-import { checkPrices, checkSingleProduct } from './functions/check-prices'
+import { checkPrices, checkSingleProduct, manualPriceCheck } from './functions/check-prices'
 
 // Export all Inngest functions
-export const functions = [checkPrices, checkSingleProduct]
+export const functions = [checkPrices, checkSingleProduct, manualPriceCheck]
