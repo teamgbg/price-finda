@@ -27,6 +27,8 @@ export interface ProductWithListings {
   usbAPorts: number | null
   hdmiPort: boolean | null
   sdCardSlot: boolean | null
+  backlitKeyboard: boolean | null
+  wifi: string | null
   listings: {
     retailer: string
     retailerSlug: string
@@ -67,6 +69,8 @@ export async function getProducts(): Promise<ProductWithListings[]> {
       usbAPorts: products.usbAPorts,
       hdmiPort: products.hdmiPort,
       sdCardSlot: products.sdCardSlot,
+      backlitKeyboard: products.backlitKeyboard,
+      wifi: products.wifi,
       brandId: products.brandId,
       brandName: brands.name,
       brandSlug: brands.slug,
@@ -164,6 +168,8 @@ export async function getProducts(): Promise<ProductWithListings[]> {
       usbAPorts: product.usbAPorts,
       hdmiPort: product.hdmiPort,
       sdCardSlot: product.sdCardSlot,
+      backlitKeyboard: product.backlitKeyboard,
+      wifi: product.wifi,
       listings: listings.map(l => ({
         retailer: l.retailerName || 'Unknown',
         retailerSlug: l.retailerSlug || 'unknown',

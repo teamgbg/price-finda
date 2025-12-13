@@ -107,9 +107,25 @@ GROQ_API_KEY="gsk_..."
 
 ### 5. Daily Price Checks (Inngest)
 - Runs at 6am AEDT daily
-- Uses Jina MCP to fetch retailer pages
-- Uses Groq AI to extract prices when structured scraping fails
+- Uses Jina Reader API to fetch retailer pages
+- Uses Groq AI (llama-3.3-70b-versatile) to extract product specs
 - Records price history for graphs
+
+### 6. Product Discovery (Inngest)
+- Runs at 8pm UTC (7am AEDT) daily
+- Two-phase scraping:
+  1. **Category page**: Fetch with `X-Target-Selector: main` to get only product grid links
+  2. **Individual pages**: Fetch each product URL for detailed specs
+- Key Jina headers:
+  - `Accept: application/json` - Returns JSON with `data.links` map
+  - `X-With-Links-Summary: true` - Includes all page links
+  - `X-Target-Selector: main` - **CRITICAL**: Only scrapes main content, excludes nav/footer/promos
+
+## Inngest Setup
+- **Cloud-only**: Inngest runs in the cloud and calls the production Vercel deployment
+- **Local testing**: Use `/api/discover-direct` endpoint (bypasses Inngest, same logic)
+- **Dev server**: Uses Inngest Dev CLI (`npx inngest-cli@latest dev`) if needed
+- **Same database**: Local and production share the same Neon PostgreSQL database
 
 ## Retailers Tracked
 | Retailer | Slug | Color |
@@ -167,3 +183,45 @@ Bash tool uses Unix paths: `/c/code/price-finda`
 - Push directly to main (work on dev branch)
 - Hardcode affiliate tags (use env var)
 - Skip price history recording
+
+## CRITICAL: Working Scraper Patterns (DO NOT BREAK)
+
+### Price Extraction (VERIFIED WORKING - Dec 2024)
+The price extraction in `src/app/api/discover-direct/route.ts` uses this priority order:
+
+1. **PRIORITY 1**: Standalone `$XXX` on its own line (regex: `/^\$(\d+)$/`)
+   - JB Hi-Fi shows prices on their own line like `"$479"`
+   - This is the MOST RELIABLE pattern
+   - **DO NOT** prioritize markdown link `[$XXX]` format - it picks up promo/related product prices
+
+2. **PRIORITY 2**: `$` on one line, number on next (JB Hi-Fi specific)
+
+3. **PRIORITY 3**: Inline like "Now $449", "Price: $599", "RRP $999"
+
+4. **PRIORITY 4**: Price at start of line like "$499 Add to cart"
+
+5. **PRIORITY 5**: Any `$XXX` in short lines (skip lines with "GB", "under $", "for $")
+
+6. **PRIORITY 6 (LAST RESORT)**: Markdown link `[$XXX]` - only if nothing else works
+
+**WARNING**: The `[$XXX](url)` pattern matches promo links like "Gifts under $159" and related product prices. NEVER make this the first priority.
+
+### JB Hi-Fi Scraping (VERIFIED WORKING)
+- Uses `X-Target-Selector: main` header to filter out sidebar promos
+- Filters for `/products/` URLs only
+- Price appears as standalone `$XXX` on its own line
+
+### The Good Guys Scraping (VERIFIED WORKING)
+- Extracts markdown links `[text](url)` containing "chromebook"
+- Uses `X-With-Links-Summary: true` header
+- Price appears as standalone `$XXX` on its own line
+
+### Product Deduplication (VERIFIED WORKING)
+- Matches by: brand + RAM + storage + screenSize + processor family
+- Screen sizes are normalized (10.95" → 11") to help matching
+- Processor families: N4500, N5100, N100, Core3, i3, i5, i7, MTK, Celeron
+
+### Spec Extraction Fallbacks (VERIFIED WORKING)
+- `extractSpecsFromName()` extracts RAM, storage, screen from product name
+- `normalizeScreenSize()` rounds to common sizes for better deduplication
+- Name-based specs override table specs when table values are invalid
