@@ -1,14 +1,14 @@
 'use client'
 
 import { useState } from 'react'
-import { ChevronDown, ChevronUp, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, SlidersHorizontal, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const BRANDS = ['Lenovo', 'HP', 'ASUS', 'Acer', 'Samsung', 'Dell']
 const RETAILERS = ['JB Hi-Fi', 'Officeworks', 'Harvey Norman', 'The Good Guys', 'Amazon AU', 'Bing Lee']
-const SCREEN_SIZES = ['11.6"', '14"', '15.6"', '17"']
+const SCREEN_SIZES = ['10-11"', '13-14"', '15"+']
 const RAM_OPTIONS = [4, 8, 16]
-const STORAGE_OPTIONS = [32, 64, 128, 256, 512]
+const STORAGE_OPTIONS = [32, 64, 128, 256]
 
 interface FilterSectionProps {
   title: string
@@ -20,13 +20,17 @@ function FilterSection({ title, children, defaultOpen = true }: FilterSectionPro
   const [isOpen, setIsOpen] = useState(defaultOpen)
 
   return (
-    <div className="border-b border-border pb-4">
+    <div className="border-b border-slate-200 pb-4 last:border-0">
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center justify-between w-full py-2 text-sm font-medium"
+        className="flex items-center justify-between w-full py-2 text-sm font-medium text-slate-700 hover:text-sky-600 transition-colors"
       >
         {title}
-        {isOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+        {isOpen ? (
+          <ChevronUp className="w-4 h-4 text-slate-400" />
+        ) : (
+          <ChevronDown className="w-4 h-4 text-slate-400" />
+        )}
       </button>
       {isOpen && <div className="mt-2 space-y-2">{children}</div>}
     </div>
@@ -35,14 +39,20 @@ function FilterSection({ title, children, defaultOpen = true }: FilterSectionPro
 
 function Checkbox({ label, checked, onChange }: { label: string; checked: boolean; onChange: () => void }) {
   return (
-    <label className="flex items-center gap-2 text-sm cursor-pointer hover:text-foreground text-muted-foreground">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={onChange}
-        className="w-4 h-4 rounded border-input"
-      />
-      {label}
+    <label className="flex items-center gap-2 cursor-pointer group">
+      <div className={cn(
+        'w-4 h-4 rounded border transition-all flex items-center justify-center',
+        checked
+          ? 'bg-sky-500 border-sky-500'
+          : 'border-slate-300 group-hover:border-sky-400'
+      )}>
+        {checked && (
+          <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+        )}
+      </div>
+      <span className="text-sm text-slate-600 group-hover:text-slate-800 transition-colors">{label}</span>
     </label>
   )
 }
@@ -54,7 +64,7 @@ export function Filters() {
   const [selectedRam, setSelectedRam] = useState<number[]>([])
   const [selectedStorage, setSelectedStorage] = useState<number[]>([])
   const [priceRange, setPriceRange] = useState<[number, number]>([0, 2000])
-  const [inStockOnly, setInStockOnly] = useState(false)
+  const [inStockOnly, setInStockOnly] = useState(true)
   const [onSaleOnly, setOnSaleOnly] = useState(false)
   const [touchscreenOnly, setTouchscreenOnly] = useState(false)
 
@@ -80,19 +90,22 @@ export function Filters() {
 
   const hasFilters = selectedBrands.length > 0 || selectedRetailers.length > 0 ||
     selectedScreenSizes.length > 0 || selectedRam.length > 0 || selectedStorage.length > 0 ||
-    inStockOnly || onSaleOnly || touchscreenOnly
+    onSaleOnly || touchscreenOnly
 
   return (
-    <div className="card-surface p-4 space-y-4">
+    <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4 sticky top-24 shadow-sm">
       <div className="flex items-center justify-between">
-        <h2 className="font-semibold">Filters</h2>
+        <div className="flex items-center gap-2">
+          <SlidersHorizontal className="w-4 h-4 text-sky-500" />
+          <h2 className="font-semibold text-slate-800">Filters</h2>
+        </div>
         {hasFilters && (
           <button
             onClick={clearAll}
-            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+            className="flex items-center gap-1 text-xs text-slate-500 hover:text-sky-600 transition-colors"
           >
-            <X className="w-3 h-3" />
-            Clear all
+            <RotateCcw className="w-3 h-3" />
+            Reset
           </button>
         )}
       </div>
@@ -102,8 +115,10 @@ export function Filters() {
         <button
           onClick={() => setInStockOnly(!inStockOnly)}
           className={cn(
-            'px-3 py-1 text-xs rounded-full border transition-colors',
-            inStockOnly ? 'bg-primary text-primary-foreground border-primary' : 'border-input hover:border-foreground'
+            'px-3 py-1.5 text-xs rounded-lg border transition-all',
+            inStockOnly
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+              : 'border-slate-200 text-slate-500 hover:border-slate-300'
           )}
         >
           In Stock
@@ -111,8 +126,10 @@ export function Filters() {
         <button
           onClick={() => setOnSaleOnly(!onSaleOnly)}
           className={cn(
-            'px-3 py-1 text-xs rounded-full border transition-colors',
-            onSaleOnly ? 'bg-accent text-accent-foreground border-accent' : 'border-input hover:border-foreground'
+            'px-3 py-1.5 text-xs rounded-lg border transition-all',
+            onSaleOnly
+              ? 'bg-rose-50 border-rose-200 text-rose-700'
+              : 'border-slate-200 text-slate-500 hover:border-slate-300'
           )}
         >
           On Sale
@@ -120,31 +137,32 @@ export function Filters() {
         <button
           onClick={() => setTouchscreenOnly(!touchscreenOnly)}
           className={cn(
-            'px-3 py-1 text-xs rounded-full border transition-colors',
-            touchscreenOnly ? 'bg-primary text-primary-foreground border-primary' : 'border-input hover:border-foreground'
+            'px-3 py-1.5 text-xs rounded-lg border transition-all',
+            touchscreenOnly
+              ? 'bg-sky-50 border-sky-200 text-sky-700'
+              : 'border-slate-200 text-slate-500 hover:border-slate-300'
           )}
         >
-          Touchscreen
+          Touch
         </button>
       </div>
 
       {/* Price Range */}
       <FilterSection title="Price Range">
         <div className="space-y-3">
-          <div className="flex items-center gap-2">
+          <div className="flex gap-2">
             <input
               type="number"
               value={priceRange[0]}
               onChange={(e) => setPriceRange([parseInt(e.target.value) || 0, priceRange[1]])}
-              className="w-full px-2 py-1 text-sm border border-input rounded"
+              className="w-full px-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-sky-400"
               placeholder="Min"
             />
-            <span className="text-muted-foreground">-</span>
             <input
               type="number"
               value={priceRange[1]}
               onChange={(e) => setPriceRange([priceRange[0], parseInt(e.target.value) || 2000])}
-              className="w-full px-2 py-1 text-sm border border-input rounded"
+              className="w-full px-3 py-1.5 text-sm bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-sky-400"
               placeholder="Max"
             />
           </div>
@@ -154,8 +172,12 @@ export function Filters() {
             max={2000}
             value={priceRange[1]}
             onChange={(e) => setPriceRange([priceRange[0], parseInt(e.target.value)])}
-            className="w-full"
+            className="w-full accent-sky-500"
           />
+          <div className="flex justify-between text-xs text-slate-500">
+            <span>${priceRange[0]}</span>
+            <span>${priceRange[1]}+</span>
+          </div>
         </div>
       </FilterSection>
 
@@ -218,6 +240,10 @@ export function Filters() {
           />
         ))}
       </FilterSection>
+
+      <button className="w-full py-2.5 text-sm bg-sky-500 hover:bg-sky-600 text-white rounded-lg font-medium transition-colors">
+        Apply Filters
+      </button>
     </div>
   )
 }
