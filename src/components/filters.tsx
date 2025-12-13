@@ -66,12 +66,13 @@ export interface FilterState {
   brands: string[]
   retailers: string[]
   screenSizes: string[]
+  resolutions: string[]
   ram: number[]
   storage: number[]
   priceRange: [number, number] // in dollars
   inStockOnly: boolean
   onSaleOnly: boolean
-  touchscreenOnly: boolean
+  touchscreen: 'all' | 'touch' | 'non-touch'
 }
 
 interface FiltersProps {
@@ -93,8 +94,12 @@ export function Filters({ products, filters, onFiltersChange }: FiltersProps) {
     const ramValues = [...new Set(products.map(p => p.ram))].filter((v): v is number => v != null).sort((a, b) => a - b)
     const storageValues = [...new Set(products.map(p => p.storage))].filter((v): v is number => v != null).sort((a, b) => a - b)
     const screenSizes = [...new Set(products.map(p => p.screenSize))].filter((v): v is string => v != null).sort()
+    // Get unique resolutions, filter out invalid ones
+    const resolutions = [...new Set(products.map(p => p.resolution))]
+      .filter((v): v is string => v != null && v.trim().length > 3 && /\d+\s*x\s*\d+/i.test(v))
+      .sort()
 
-    return { brands, retailers, ramValues, storageValues, screenSizes, maxPriceDollars }
+    return { brands, retailers, ramValues, storageValues, screenSizes, resolutions, maxPriceDollars }
   }, [products, maxPriceDollars])
 
   const updateFilter = <K extends keyof FilterState>(key: K, value: FilterState[K]) => {
@@ -114,18 +119,20 @@ export function Filters({ products, filters, onFiltersChange }: FiltersProps) {
       brands: [],
       retailers: [],
       screenSizes: [],
+      resolutions: [],
       ram: [],
       storage: [],
       priceRange: [0, filterOptions.maxPriceDollars],
       inStockOnly: true,
       onSaleOnly: false,
-      touchscreenOnly: false,
+      touchscreen: 'all',
     })
   }
 
   const hasFilters = filters.brands.length > 0 || filters.retailers.length > 0 ||
-    filters.screenSizes.length > 0 || filters.ram.length > 0 || filters.storage.length > 0 ||
-    filters.onSaleOnly || filters.touchscreenOnly
+    filters.screenSizes.length > 0 || filters.resolutions.length > 0 ||
+    filters.ram.length > 0 || filters.storage.length > 0 ||
+    filters.onSaleOnly || filters.touchscreen !== 'all'
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-3 space-y-2 sticky top-20 shadow-sm">
@@ -168,17 +175,6 @@ export function Filters({ products, filters, onFiltersChange }: FiltersProps) {
           )}
         >
           On Sale
-        </button>
-        <button
-          onClick={() => updateFilter('touchscreenOnly', !filters.touchscreenOnly)}
-          className={cn(
-            'px-2 py-1 text-[10px] rounded-md border transition-all',
-            filters.touchscreenOnly
-              ? 'bg-sky-50 border-sky-200 text-sky-700'
-              : 'border-slate-200 text-slate-500 hover:border-slate-300'
-          )}
-        >
-          Touch
         </button>
       </div>
 
@@ -281,6 +277,41 @@ export function Filters({ products, filters, onFiltersChange }: FiltersProps) {
           ))}
         </FilterSection>
       )}
+
+      {/* Resolution */}
+      {filterOptions.resolutions.length > 0 && (
+        <FilterSection title="Resolution" columns={filterOptions.resolutions.length > 3 ? 2 : 1}>
+          {filterOptions.resolutions.map((res) => (
+            <Checkbox
+              key={res}
+              label={res}
+              checked={filters.resolutions.includes(res)}
+              onChange={() => toggleArrayFilter('resolutions', filters.resolutions, res)}
+            />
+          ))}
+        </FilterSection>
+      )}
+
+      {/* Touchscreen */}
+      <FilterSection title="Touchscreen">
+        <div className="space-y-1">
+          <Checkbox
+            label="All"
+            checked={filters.touchscreen === 'all'}
+            onChange={() => updateFilter('touchscreen', 'all')}
+          />
+          <Checkbox
+            label="Touchscreen"
+            checked={filters.touchscreen === 'touch'}
+            onChange={() => updateFilter('touchscreen', 'touch')}
+          />
+          <Checkbox
+            label="Non-touchscreen"
+            checked={filters.touchscreen === 'non-touch'}
+            onChange={() => updateFilter('touchscreen', 'non-touch')}
+          />
+        </div>
+      </FilterSection>
     </div>
   )
 }

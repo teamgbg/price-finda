@@ -1,6 +1,6 @@
 'use client'
 
-import { TrendingDown, TrendingUp, Monitor, HardDrive, MemoryStick, Cpu, Battery, Weight, Usb, Keyboard, Wifi, Gauge } from 'lucide-react'
+import { TrendingDown, TrendingUp, Monitor, HardDrive, MemoryStick, Cpu, Battery, Weight, Usb, Keyboard, Wifi, Gauge, Sun } from 'lucide-react'
 import { cn, formatPrice } from '@/lib/utils'
 import type { ProductWithListings } from '@/lib/queries'
 
@@ -9,13 +9,10 @@ interface ProductCardProps {
   viewMode: 'grid' | 'list'
 }
 
-const RETAILER_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  'JB Hi-Fi': { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-800' },
-  'Officeworks': { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-800' },
-  'Harvey Norman': { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-800' },
-  'The Good Guys': { bg: 'bg-orange-50', border: 'border-orange-200', text: 'text-orange-800' },
-  'Amazon AU': { bg: 'bg-yellow-50', border: 'border-yellow-200', text: 'text-yellow-800' },
-  'PB Tech': { bg: 'bg-cyan-50', border: 'border-cyan-200', text: 'text-cyan-800' },
+// Uniform styling for retailer buttons - green highlight for cheapest
+const BUTTON_STYLES = {
+  default: { bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-700' },
+  cheapest: { bg: 'bg-emerald-50', border: 'border-emerald-300', text: 'text-emerald-800' },
 }
 
 export function ProductCard({ product, viewMode }: ProductCardProps) {
@@ -126,6 +123,12 @@ export function ProductCard({ product, viewMode }: ProductCardProps) {
                 {product.batteryLife}Wh
               </span>
             )}
+            {(product.screenBrightness ?? 0) > 0 && (
+              <span className="flex items-center gap-1">
+                <Sun className="w-3 h-3" />
+                {product.screenBrightness} nits
+              </span>
+            )}
             {((product.usbCPorts ?? 0) > 0 || (product.usbAPorts ?? 0) > 0) && (
               <span className="flex items-center gap-1">
                 <Usb className="w-3 h-3" />
@@ -148,27 +151,32 @@ export function ProductCard({ product, viewMode }: ProductCardProps) {
 
           {/* Retailers */}
           <div className="flex items-center gap-2 mt-3 flex-wrap">
-            {product.listings.map((listing, index) => {
-              const colors = RETAILER_COLORS[listing.retailer] || { bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-700' }
-              return (
-                <a
-                  key={`${listing.retailer}-${index}`}
-                  href={listing.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={cn(
-                    'px-2.5 py-1 rounded-lg text-xs font-medium border transition-all hover:scale-105',
-                    colors.bg,
-                    colors.border,
-                    colors.text,
-                    !listing.inStock && 'opacity-50'
-                  )}
-                >
-                  {listing.retailer}: {formatPrice(listing.salePrice || listing.price)}
-                  {!listing.inStock && ' (OOS)'}
-                </a>
-              )
-            })}
+            {product.listings
+              .slice()
+              .sort((a, b) => (a.salePrice || a.price) - (b.salePrice || b.price))
+              .map((listing, index) => {
+                const isCheapest = index === 0
+                const colors = isCheapest ? BUTTON_STYLES.cheapest : BUTTON_STYLES.default
+                return (
+                  <a
+                    key={`${listing.retailer}-${index}`}
+                    href={listing.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={cn(
+                      'px-2.5 py-1 rounded-lg text-xs font-medium border transition-all hover:scale-105',
+                      colors.bg,
+                      colors.border,
+                      colors.text,
+                      isCheapest && 'ring-1 ring-emerald-400',
+                      !listing.inStock && 'opacity-50'
+                    )}
+                  >
+                    {listing.retailer}: {formatPrice(listing.salePrice || listing.price)}
+                    {!listing.inStock && ' (OOS)'}
+                  </a>
+                )
+              })}
           </div>
         </div>
       </div>
@@ -243,6 +251,12 @@ export function ProductCard({ product, viewMode }: ProductCardProps) {
                 {product.batteryLife}Wh
               </span>
             )}
+            {(product.screenBrightness ?? 0) > 0 && (
+              <span className="flex items-center gap-1">
+                <Sun className="w-3 h-3 text-amber-500" />
+                {product.screenBrightness} nits
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             {((product.usbCPorts ?? 0) > 0 || (product.usbAPorts ?? 0) > 0) && (
@@ -281,9 +295,11 @@ export function ProductCard({ product, viewMode }: ProductCardProps) {
         {/* All retailer buttons */}
         <div className="flex flex-wrap gap-1.5">
           {product.listings
+            .slice()
             .sort((a, b) => (a.salePrice || a.price) - (b.salePrice || b.price))
             .map((listing, index) => {
-              const colors = RETAILER_COLORS[listing.retailer] || { bg: 'bg-slate-50', border: 'border-slate-200', text: 'text-slate-700' }
+              const isCheapest = index === 0
+              const colors = isCheapest ? BUTTON_STYLES.cheapest : BUTTON_STYLES.default
               return (
                 <a
                   key={`${listing.retailer}-${index}`}
@@ -295,6 +311,7 @@ export function ProductCard({ product, viewMode }: ProductCardProps) {
                     colors.bg,
                     colors.border,
                     colors.text,
+                    isCheapest && 'ring-1 ring-emerald-400',
                     !listing.inStock && 'opacity-50'
                   )}
                 >

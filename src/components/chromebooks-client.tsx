@@ -30,12 +30,13 @@ export function ChromebooksClient({ products }: ChromebooksClientProps) {
     brands: [],
     retailers: [],
     screenSizes: [],
+    resolutions: [],
     ram: [],
     storage: [],
     priceRange: [0, getMaxPriceDollars(products)],
     inStockOnly: true,
     onSaleOnly: false,
-    touchscreenOnly: false,
+    touchscreen: 'all',
   }))
 
   // Apply all filters to products
@@ -71,8 +72,18 @@ export function ChromebooksClient({ products }: ChromebooksClientProps) {
         return false
       }
 
+      // Resolution filter
+      if (filters.resolutions.length > 0 && product.resolution) {
+        if (!filters.resolutions.includes(product.resolution)) {
+          return false
+        }
+      }
+
       // Touchscreen filter
-      if (filters.touchscreenOnly && !product.touchscreen) {
+      if (filters.touchscreen === 'touch' && !product.touchscreen) {
+        return false
+      }
+      if (filters.touchscreen === 'non-touch' && product.touchscreen) {
         return false
       }
 
@@ -118,7 +129,7 @@ export function ChromebooksClient({ products }: ChromebooksClientProps) {
             {/* Logo */}
             <Link href="/" className="flex items-center gap-2 group">
               <img
-                src="/max-logo.jpg"
+                src="/max-logo-square.jpg"
                 alt="Max"
                 className="w-10 h-10 rounded-xl object-cover shadow-md"
               />
@@ -164,17 +175,6 @@ export function ChromebooksClient({ products }: ChromebooksClientProps) {
                   )}
                 >
                   Price ↓
-                </button>
-                <button
-                  onClick={() => setSortBy('price-drop')}
-                  className={cn(
-                    'px-2 py-1.5 transition-all',
-                    sortBy === 'price-drop'
-                      ? 'bg-emerald-500 text-white'
-                      : 'text-slate-500 hover:bg-slate-200'
-                  )}
-                >
-                  Drops
                 </button>
                 <button
                   onClick={() => setSortBy('name')}
@@ -279,17 +279,6 @@ export function ChromebooksClient({ products }: ChromebooksClientProps) {
                     )}
                   >
                     Price ↓
-                  </button>
-                  <button
-                    onClick={() => setSortBy('price-drop')}
-                    className={cn(
-                      'flex-1 px-2 py-1.5 transition-all',
-                      sortBy === 'price-drop'
-                        ? 'bg-emerald-500 text-white'
-                        : 'text-slate-500'
-                    )}
-                  >
-                    Drops
                   </button>
                   <button
                     onClick={() => setSortBy('name')}
