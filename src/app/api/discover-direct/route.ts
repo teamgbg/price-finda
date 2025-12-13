@@ -51,21 +51,46 @@ async function fetchWithJina(url: string): Promise<string | null> {
   }
 }
 
-async function extractProductUrls(markdown: string, retailerSlug: string): Promise<string[]> {
+interface ProductFromPage {
+  name: string
+  price: number
+  screenSize: string
+  ram: number
+  storage: number
+  processor: string
+}
+
+async function extractProductsFromCategoryPage(markdown: string, retailerSlug: string): Promise<ProductFromPage[]> {
   try {
     const completion = await groq.chat.completions.create({
-      model: 'llama-3.1-8b-instant',
+      model: 'llama-3.1-70b-versatile',
       messages: [
         {
+          role: 'system',
+          content: `You are extracting Chromebook products from a ${retailerSlug} category page. Extract all products with their names, prices, and specs.`,
+        },
+        {
           role: 'user',
-          content: `Extract all product URLs from this ${retailerSlug} category page. Return JSON: {"urls": ["https://..."]}
+          content: `Extract ALL Chromebook products from this page. Return JSON array:
+{"products": [
+  {"name": "HP 14a-nf0005TU 14\" HD Touchscreen Chromebook", "price": 479, "screenSize": "14", "ram": 4, "storage": 64, "processor": "Intel N100"},
+  ...
+]}
 
-Page:
-${markdown.slice(0, 6000)}`,
+Rules:
+- Extract EVERY product listed
+- price in dollars (479 not $479)
+- screenSize just the number (14 not 14")
+- ram in GB (4, 8, 16)
+- storage in GB (64, 128, 256)
+- processor: Intel N100, Intel N4500, Intel i3, Intel i5, etc.
+
+Page content:
+${markdown.slice(0, 12000)}`,
         },
       ],
       temperature: 0,
-      max_tokens: 2000,
+      max_tokens: 4000,
       response_format: { type: 'json_object' },
     })
 
@@ -73,10 +98,10 @@ ${markdown.slice(0, 6000)}`,
     if (!content) return []
 
     const parsed = JSON.parse(content)
-    const urls = Array.isArray(parsed) ? parsed : (parsed.urls || [])
-    return urls.filter((url: string) => typeof url === 'string' && url.includes('/products/'))
+    const products = Array.isArray(parsed) ? parsed : (parsed.products || [])
+    return products.filter((p: ProductFromPage) => p.name && p.price)
   } catch (error) {
-    console.error('Failed to extract URLs:', error)
+    console.error('Failed to extract products:', error)
     return []
   }
 }
@@ -175,16 +200,16 @@ export async function POST() {
       }
       log(`Fetched ${categoryContent.length} characters`)
 
-      // Extract product URLs
-      log('Extracting product URLs with Groq AI...')
-      const productUrls = await extractProductUrls(categoryContent, source.retailerSlug)
-      log(`Found ${productUrls.length} product URLs`)
-      discovered += productUrls.length
+      // Extract products directly from category page
+      log('Extracting products with Groq AI...')
+      const extractedProducts = await extractProductsFromCategoryPage(categoryContent, source.retailerSlug)
+      log(`Found ${extractedProducts.length} products`)
+      discovered += extractedProducts.length
 
-      // Get existing listings
-      const existingListings = await db.select({ url: retailerListings.retailerUrl }).from(retailerListings)
-      const existingUrls = new Set(existingListings.map(l => l.url))
-      log(`${existingUrls.size} existing listings`)
+      // Get existing products by name
+      const existingProducts = await db.select({ name: products.name }).from(products)
+      const existingNames = new Set(existingProducts.map(p => p.name.toLowerCase()))
+      log(`${existingNames.size} existing products in database`)
 
       // Get or create category
       let [category] = await db.select().from(categories).where(eq(categories.slug, 'chromebooks'))
@@ -196,29 +221,15 @@ export async function POST() {
         log('Created Chromebooks category')
       }
 
-      // Process each product (limit to first 3 for testing)
-      const urlsToProcess = productUrls.slice(0, 3)
-      log(`Processing first ${urlsToProcess.length} products...`)
-
-      for (const productUrl of urlsToProcess) {
-        if (existingUrls.has(productUrl)) {
-          log(`Skipping existing: ${productUrl}`)
+      // Process each product
+      for (const productData of extractedProducts) {
+        // Skip if product already exists
+        if (existingNames.has(productData.name.toLowerCase())) {
+          log(`Skipping existing: ${productData.name}`)
           continue
         }
 
-        log(`Scraping: ${productUrl}`)
-        const content = await fetchWithJina(productUrl)
-        if (!content) {
-          log('Failed to fetch product page')
-          continue
-        }
-
-        const productData = await extractProductData(content, source.retailerSlug)
-        if (!productData) {
-          log('Failed to extract product data')
-          continue
-        }
-        log(`Extracted: ${productData.name} - $${productData.price}`)
+        log(`Adding: ${productData.name} - $${productData.price}`)
 
         // Get or create brand
         const brandName = extractBrand(productData.name)
@@ -231,19 +242,23 @@ export async function POST() {
           log(`Created brand: ${brandName}`)
         }
 
+        // Construct product URL from name (JB Hi-Fi format)
+        const productSlug = slugify(productData.name)
+        const productUrl = `https://www.jbhifi.com.au/products/${productSlug}`
+
         // Insert product
         const [newProduct] = await db.insert(products).values({
           brandId: brand.id,
           categoryId: category.id,
           name: productData.name,
-          slug: slugify(productData.name),
-          imageUrl: productData.imageUrl,
-          screenSize: productData.screenSize,
+          slug: productSlug,
+          imageUrl: '', // Will be populated later
+          screenSize: productData.screenSize + '"',
           ram: productData.ram,
           storage: productData.storage,
           processor: productData.processor,
-          touchscreen: productData.touchscreen,
-          storageType: productData.storageType,
+          touchscreen: productData.name.toLowerCase().includes('touchscreen'),
+          storageType: 'eMMC',
         }).returning()
         log(`Created product: ${newProduct.name}`)
 
@@ -254,7 +269,7 @@ export async function POST() {
           retailerUrl: productUrl,
           retailerProductName: productData.name,
           currentPriceCents: productData.price * 100,
-          inStock: productData.inStock,
+          inStock: true,
           lastChecked: new Date(),
         })
         log(`Created listing at $${productData.price}`)
