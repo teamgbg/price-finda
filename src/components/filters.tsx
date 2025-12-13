@@ -242,7 +242,7 @@ export function Filters({ products, filters, onFiltersChange }: FiltersProps) {
 
       {/* Screen Size */}
       {filterOptions.screenSizes.length > 0 && (
-        <FilterSection title="Screen" columns={filterOptions.screenSizes.length > 3 ? 2 : filterOptions.screenSizes.length}>
+        <FilterSection title="Screen" columns={filterOptions.screenSizes.length > 3 ? 2 : Math.min(filterOptions.screenSizes.length, 3) as 1 | 2 | 3}>
           {filterOptions.screenSizes.map((size) => (
             <Checkbox
               key={size}
@@ -256,7 +256,7 @@ export function Filters({ products, filters, onFiltersChange }: FiltersProps) {
 
       {/* RAM */}
       {filterOptions.ramValues.length > 0 && (
-        <FilterSection title="RAM" columns={filterOptions.ramValues.length > 3 ? 2 : filterOptions.ramValues.length}>
+        <FilterSection title="RAM" columns={filterOptions.ramValues.length > 3 ? 2 : Math.min(filterOptions.ramValues.length, 3) as 1 | 2 | 3}>
           {filterOptions.ramValues.map((ram) => (
             <Checkbox
               key={ram}
@@ -270,7 +270,7 @@ export function Filters({ products, filters, onFiltersChange }: FiltersProps) {
 
       {/* Storage */}
       {filterOptions.storageValues.length > 0 && (
-        <FilterSection title="Storage" columns={filterOptions.storageValues.length > 3 ? 2 : filterOptions.storageValues.length}>
+        <FilterSection title="Storage" columns={filterOptions.storageValues.length > 3 ? 2 : Math.min(filterOptions.storageValues.length, 3) as 1 | 2 | 3}>
           {filterOptions.storageValues.map((storage) => (
             <Checkbox
               key={storage}
