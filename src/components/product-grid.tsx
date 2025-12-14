@@ -5,7 +5,7 @@ import { ProductCard } from './product-card'
 import { cn } from '@/lib/utils'
 import type { ProductWithListings } from '@/lib/queries'
 
-export type SortOption = 'price-asc' | 'price-desc' | 'name' | 'brand' | 'price-drop'
+export type SortOption = 'price-asc' | 'price-desc' | 'name' | 'brand' | 'price-drop' | 'performance'
 export type ViewMode = 'grid' | 'list'
 
 interface ProductGridProps {
@@ -30,6 +30,11 @@ export function ProductGrid({ products, sortBy = 'price-asc', viewMode = 'grid' 
         return a.brand.localeCompare(b.brand)
       case 'price-drop':
         return a.priceChange - b.priceChange
+      case 'performance':
+        // Higher benchmark = better, so sort descending. Products without benchmark go to end.
+        const aBench = a.cpuBenchmark ?? 0
+        const bBench = b.cpuBenchmark ?? 0
+        return bBench - aBench
       default:
         return 0
     }

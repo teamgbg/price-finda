@@ -107,9 +107,25 @@ GROQ_API_KEY="gsk_..."
 
 ### 5. Daily Price Checks (Inngest)
 - Runs at 6am AEDT daily
-- Uses Jina MCP to fetch retailer pages
-- Uses Groq AI to extract prices when structured scraping fails
+- Uses Jina Reader API to fetch retailer pages
+- Uses Groq AI (llama-3.3-70b-versatile) to extract product specs
 - Records price history for graphs
+
+### 6. Product Discovery (Inngest)
+- Runs at 8pm UTC (7am AEDT) daily
+- Two-phase scraping:
+  1. **Category page**: Fetch with `X-Target-Selector: main` to get only product grid links
+  2. **Individual pages**: Fetch each product URL for detailed specs
+- Key Jina headers:
+  - `Accept: application/json` - Returns JSON with `data.links` map
+  - `X-With-Links-Summary: true` - Includes all page links
+  - `X-Target-Selector: main` - **CRITICAL**: Only scrapes main content, excludes nav/footer/promos
+
+## Inngest Setup
+- **Cloud-only**: Inngest runs in the cloud and calls the production Vercel deployment
+- **Local testing**: Use `/api/discover-direct` endpoint (bypasses Inngest, same logic)
+- **Dev server**: Uses Inngest Dev CLI (`npx inngest-cli@latest dev`) if needed
+- **Same database**: Local and production share the same Neon PostgreSQL database
 
 ## Retailers Tracked
 | Retailer | Slug | Color |
@@ -167,3 +183,88 @@ Bash tool uses Unix paths: `/c/code/price-finda`
 - Push directly to main (work on dev branch)
 - Hardcode affiliate tags (use env var)
 - Skip price history recording
+
+## CRITICAL: Working Scraper Patterns (DO NOT BREAK)
+
+### Price Extraction (VERIFIED WORKING - Dec 2024)
+The price extraction in `src/app/api/discover-direct/route.ts` uses this priority order:
+
+1. **PRIORITY 1**: Standalone `$XXX` on its own line (regex: `/^\$(\d+)$/`)
+   - JB Hi-Fi shows prices on their own line like `"$479"`
+   - This is the MOST RELIABLE pattern
+   - **DO NOT** prioritize markdown link `[$XXX]` format - it picks up promo/related product prices
+
+2. **PRIORITY 2**: `$` on one line, number on next (JB Hi-Fi specific)
+
+3. **PRIORITY 3**: Inline like "Now $449", "Price: $599", "RRP $999"
+
+4. **PRIORITY 4**: Price at start of line like "$499 Add to cart"
+
+5. **PRIORITY 5**: Any `$XXX` in short lines (skip lines with "GB", "under $", "for $")
+
+6. **PRIORITY 6 (LAST RESORT)**: Markdown link `[$XXX]` - only if nothing else works
+
+**WARNING**: The `[$XXX](url)` pattern matches promo links like "Gifts under $159" and related product prices. NEVER make this the first priority.
+
+### JB Hi-Fi Scraping (VERIFIED WORKING)
+- Uses `X-Target-Selector: main` header to filter out sidebar promos
+- Filters for `/products/` URLs only
+- Price appears as standalone `$XXX` on its own line
+
+### The Good Guys Scraping (VERIFIED WORKING)
+- Extracts markdown links `[text](url)` containing "chromebook"
+- Uses `X-With-Links-Summary: true` header
+- Price appears as standalone `$XXX` on its own line
+
+### Product Deduplication (VERIFIED WORKING)
+- Matches by: brand + RAM + storage + screenSize + processor family
+- Screen sizes are normalized (10.95" → 11") to help matching
+- Processor families: N4500, N5100, N100, Core3, i3, i5, i7, MTK, Celeron
+
+### Spec Extraction Fallbacks (VERIFIED WORKING)
+- `extractSpecsFromName()` extracts RAM, storage, screen from product name
+- `normalizeScreenSize()` rounds to common sizes for better deduplication
+- Name-based specs override table specs when table values are invalid
+
+## Image Fetching Methods (Dec 2024)
+
+### What DOES NOT Work
+- **Jina Reader for Officeworks**: Returns 404 for all Officeworks URLs (blocked)
+- **Direct S3 URL guessing**: Officeworks images require exact filename, S3 returns 403 on pattern guesses
+- **Bright Data bulk scraping**: Hits navigation limits after ~3-5 pages per session
+
+### What WORKS
+- **Bright Data with batching**: Connect → scrape 3 pages → disconnect → wait 5s → repeat
+  - Script: `fetch-officeworks-images.mjs`
+  - Uses fresh browser connection per batch to avoid nav limits
+- **JB Hi-Fi/Harvey Norman images**: Can be scraped via their product pages
+- **Images from other retailers**: Products with listings at JB Hi-Fi often have images from there
+
+### Image URL Patterns
+- **Officeworks S3**: `https://s3-ap-southeast-2.amazonaws.com/wc-prod-pim/JPEG_1000x1000/{SKU}_{description}.jpg`
+  - SKU is in the URL: `/p/product-name-{SKU}` → extract last part
+  - Requires exact filename match (can't guess description part)
+- **JB Hi-Fi CDN**: `https://www.jbhifi.com.au/cdn/shop/files/{product-id}.jpg`
+
+## CPU Benchmark Sources (VERIFIED Dec 2024)
+
+**Always look up benchmarks from PassMark - DO NOT GUESS!**
+- Source: https://www.cpubenchmark.net/cpu_list.php
+- Use WebFetch to get actual scores
+
+### Verified Benchmark Scores
+| Processor | PassMark Score |
+|-----------|----------------|
+| Intel N50 | 2609 |
+| Intel N100 | 5356 |
+| Intel N200 | 5500 |
+| Intel N4500 | 1813 |
+| Intel Core i3-N305 | 9587 |
+| Intel Core 3 N355 | 10521 |
+| Intel Core i5-1334U | 13302 |
+| MediaTek Kompanio 520 | 3723 |
+| MediaTek Kompanio 838 | 5343 |
+| Snapdragon 7c Gen 2 | 2200 |
+
+**WARNING**: Never assign the same benchmark to different processors as a placeholder.
+If you don't know a benchmark, look it up or leave it null.
