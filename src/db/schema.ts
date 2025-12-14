@@ -63,6 +63,10 @@ export const products = pgTable('products', {
   hdmiPort: boolean('hdmi_port').default(false),
   sdCardSlot: boolean('sd_card_slot').default(false),
 
+  // Keyboard and wireless
+  backlitKeyboard: boolean('backlit_keyboard').default(false),
+  wifi: text('wifi'), // "Wi-Fi 6E", "Wi-Fi 6", etc.
+
   // Additional specs stored as JSON for flexibility
   specs: jsonb('specs'),
 

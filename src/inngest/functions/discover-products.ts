@@ -1,12 +1,14 @@
 import { eq } from 'drizzle-orm'
-import Groq from 'groq-sdk'
+import OpenAI from 'openai'
 import { db } from '../../db'
 import { products, retailerListings, brands, retailers, categories } from '../../db/schema'
 import { inngest } from '../client'
 
-const groq = new Groq({
-  apiKey: process.env.GROQ_API_KEY,
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
 })
+
+const JINA_API_KEY = process.env.JINA_API_KEY || ''
 
 // Retailer category pages to discover products from
 const DISCOVERY_SOURCES = [
@@ -15,6 +17,11 @@ const DISCOVERY_SOURCES = [
     categoryUrl: 'https://www.jbhifi.com.au/collections/computers-tablets/chromebooks',
   },
 ]
+
+interface ProductLink {
+  name: string
+  url: string
+}
 
 function slugify(text: string): string {
   return text
@@ -36,56 +43,98 @@ function extractBrand(productName: string): string {
   return 'Unknown'
 }
 
-async function fetchWithJina(url: string): Promise<string | null> {
+// Fetch product links from a category page using Jina's JSON + links feature
+async function fetchProductLinks(categoryUrl: string): Promise<ProductLink[]> {
   try {
-    const jinaUrl = 'https://r.jina.ai/' + encodeURIComponent(url)
-    const response = await fetch(jinaUrl, {
-      headers: { 'Accept': 'text/plain' },
+    const response = await fetch('https://r.jina.ai/' + encodeURIComponent(categoryUrl), {
+      headers: {
+        'Accept': 'application/json',
+        'X-With-Links-Summary': 'true',
+        'X-Target-Selector': 'main', // Only get links from main content, not nav/footer
+      },
+      signal: AbortSignal.timeout(30000),
+    })
+
+    if (!response.ok) return []
+
+    const json = await response.json()
+    const links: Record<string, string> = json.data?.links || {}
+
+    // Filter for product URLs only (main selector already excludes nav junk)
+    return Object.entries(links)
+      .filter(([, url]) => url.includes('/products/'))
+      .map(([name, url]) => ({
+        // Remove rating suffix like "4.3(73)" from product names
+        name: name.replace(/[\d.]+\(\d+\)$/, '').trim(),
+        url,
+      }))
+  } catch (error) {
+    console.error('Failed to fetch product links:', error)
+    return []
+  }
+}
+
+interface JinaImage {
+  label: string
+  url: string
+}
+
+interface PageContent {
+  markdown: string
+  images: JinaImage[]
+}
+
+// Fetch page content with images from Jina
+async function fetchPageContent(url: string): Promise<PageContent | null> {
+  try {
+    const response = await fetch('https://r.jina.ai/' + encodeURIComponent(url), {
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${JINA_API_KEY}`,
+        'X-Return-Format': 'markdown',
+        'X-With-Images-Summary': 'all',
+      },
       signal: AbortSignal.timeout(30000),
     })
     if (!response.ok) return null
-    return await response.text()
+    const json = await response.json()
+
+    const markdown = json.data?.content || ''
+    const rawImages: Record<string, string> = json.data?.images || {}
+    const images: JinaImage[] = Object.entries(rawImages).map(([label, imgUrl]) => ({
+      label,
+      url: imgUrl,
+    }))
+
+    return { markdown, images }
   } catch {
     return null
   }
 }
 
-// Use Groq AI to extract product URLs from category page
-async function extractProductUrls(markdown: string, retailerSlug: string): Promise<string[]> {
-  try {
-    const completion = await groq.chat.completions.create({
-      model: 'llama-3.1-8b-instant',
-      messages: [
-        {
-          role: 'user',
-          content: `Extract all product URLs from this ${retailerSlug} category page. Return JSON: {"urls": ["https://..."]}
-
-Page:
-${markdown.slice(0, 6000)}`,
-        },
-      ],
-      temperature: 0,
-      max_tokens: 2000,
-      response_format: { type: 'json_object' },
-    })
-
-    const content = completion.choices[0]?.message?.content
-    if (!content) return []
-
-    const parsed = JSON.parse(content)
-    const urls = Array.isArray(parsed) ? parsed : (parsed.urls || [])
-    return urls.filter((url: string) => typeof url === 'string' && url.includes('/products/'))
-  } catch (error) {
-    console.error('Failed to extract URLs:', error)
-    return []
+// Find the main product image from Jina's image list
+function findMainProductImage(images: JinaImage[], retailerSlug: string): string {
+  if (retailerSlug === 'jb-hifi') {
+    // JB Hi-Fi pattern: https://www.jbhifi.com.au/cdn/shop/files/SKU-Product-0-I-xxx.jpg
+    for (const img of images) {
+      if (img.url.includes('jbhifi.com.au/cdn/shop/files') && img.url.includes('-Product-0-I-')) {
+        return img.url
+      }
+    }
+    // Fallback: any JB Hi-Fi product image
+    for (const img of images) {
+      if (img.url.includes('jbhifi.com.au/cdn/shop/files') && img.url.includes('-Product-')) {
+        return img.url
+      }
+    }
   }
+  return ''
 }
 
-// Use Groq AI to extract product data from individual product page
+// Use OpenAI GPT-5 mini to extract product data from individual product page
 async function extractProductData(markdown: string, retailerSlug: string): Promise<{
   name: string
   price: number
-  imageUrl: string
   screenSize: string
   ram: number
   storage: number
@@ -95,30 +144,29 @@ async function extractProductData(markdown: string, retailerSlug: string): Promi
   inStock: boolean
 } | null> {
   try {
-    const completion = await groq.chat.completions.create({
-      model: 'llama-3.1-70b-versatile',
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4.1-mini-2025-04-14',
       messages: [
         {
-          role: 'system',
-          content: `Extract product data from ${retailerSlug}. Use Australian Dollar prices.`,
-        },
-        {
           role: 'user',
-          content: `Extract Chromebook data as JSON:
-{"name":"Full product name", "price":499, "imageUrl":"https://...", "screenSize":"14", "ram":8, "storage":128, "storageType":"eMMC", "processor":"Intel Celeron N4500", "touchscreen":false, "inStock":true}
+          content: `Extract Chromebook data from this ${retailerSlug} product page. Return JSON only.
+
+CRITICAL: The price MUST be the EXACT dollar amount shown on the page (e.g. if page shows "$429" return 429, NOT 449 or any other number).
+
+{"name":"Full product name", "price":429, "screenSize":"14", "ram":8, "storage":128, "storageType":"eMMC", "processor":"Intel Celeron N4500", "touchscreen":false, "inStock":true}
 
 Rules:
-- price in dollars (499 not 49900)
-- screenSize just the number
-- inStock true only if "Add to Cart" visible and no "Out of Stock"
+- price: Extract the EXACT price shown (the main price, not variant prices)
+- screenSize: Just the number (e.g. "14")
+- touchscreen: Check if product has touchscreen (look for "Touchscreen: Yes/No")
+- inStock: true only if "Add to Cart" button visible
 
-Page:
-${markdown.slice(0, 8000)}`,
+Page content:
+${markdown.slice(0, 12000)}`,
         },
       ],
-      temperature: 0.1,
-      max_tokens: 500,
       response_format: { type: 'json_object' },
+      max_tokens: 500,
     })
 
     const content = completion.choices[0]?.message?.content
@@ -130,7 +178,6 @@ ${markdown.slice(0, 8000)}`,
     return {
       name: p.name,
       price: typeof p.price === 'number' ? p.price : parseInt(String(p.price).replace(/[^0-9]/g, '')),
-      imageUrl: p.imageUrl || '',
       screenSize: String(p.screenSize || '14').replace(/[^0-9.]/g, '') + '"',
       ram: parseInt(p.ram) || 4,
       storage: parseInt(p.storage) || 64,
@@ -161,16 +208,13 @@ export const discoverProducts = inngest.createFunction(
 
       if (!retailer) continue
 
-      const categoryContent = await step.run('fetch-category-' + source.retailerSlug, async () => {
-        return await fetchWithJina(source.categoryUrl)
+      // Fetch all product links from the category page (uses Jina JSON + links)
+      const productLinks = await step.run('fetch-products-' + source.retailerSlug, async () => {
+        return await fetchProductLinks(source.categoryUrl)
       })
 
-      if (!categoryContent) continue
-
-      const productUrls = await step.run('extract-urls-' + source.retailerSlug, async () => {
-        return await extractProductUrls(categoryContent, source.retailerSlug)
-      })
-      discovered += productUrls.length
+      if (!productLinks.length) continue
+      discovered += productLinks.length
 
       const existingListings = await step.run('get-existing-' + source.retailerSlug, async () => {
         return await db.select({ url: retailerListings.retailerUrl }).from(retailerListings)
@@ -188,15 +232,16 @@ export const discoverProducts = inngest.createFunction(
         return cat
       })
 
-      for (const productUrl of productUrls) {
-        if (existingUrls.has(productUrl)) continue
+      for (const productLink of productLinks) {
+        if (existingUrls.has(productLink.url)) continue
 
-        const productData = await step.run('scrape-' + slugify(productUrl), async () => {
-          const content = await fetchWithJina(productUrl)
+        const productData = await step.run('scrape-' + slugify(productLink.url), async () => {
+          const content = await fetchPageContent(productLink.url)
           if (!content) return null
-          const parsed = await extractProductData(content, source.retailerSlug)
+          const parsed = await extractProductData(content.markdown, source.retailerSlug)
           if (!parsed) return null
-          return { ...parsed, url: productUrl }
+          const imageUrl = findMainProductImage(content.images, source.retailerSlug)
+          return { ...parsed, url: productLink.url, imageUrl }
         })
 
         if (!productData) continue
@@ -269,16 +314,13 @@ export const manualDiscovery = inngest.createFunction(
 
       if (!retailer) continue
 
-      const categoryContent = await step.run('fetch-category-' + source.retailerSlug, async () => {
-        return await fetchWithJina(source.categoryUrl)
+      // Fetch all product links from the category page (uses Jina JSON + links)
+      const productLinks = await step.run('fetch-products-' + source.retailerSlug, async () => {
+        return await fetchProductLinks(source.categoryUrl)
       })
 
-      if (!categoryContent) continue
-
-      const productUrls = await step.run('extract-urls-' + source.retailerSlug, async () => {
-        return await extractProductUrls(categoryContent, source.retailerSlug)
-      })
-      discovered += productUrls.length
+      if (!productLinks.length) continue
+      discovered += productLinks.length
 
       const existingListings = await step.run('get-existing-' + source.retailerSlug, async () => {
         return await db.select({ url: retailerListings.retailerUrl }).from(retailerListings)
@@ -296,15 +338,16 @@ export const manualDiscovery = inngest.createFunction(
         return cat
       })
 
-      for (const productUrl of productUrls) {
-        if (existingUrls.has(productUrl)) continue
+      for (const productLink of productLinks) {
+        if (existingUrls.has(productLink.url)) continue
 
-        const productData = await step.run('scrape-' + slugify(productUrl), async () => {
-          const content = await fetchWithJina(productUrl)
+        const productData = await step.run('scrape-' + slugify(productLink.url), async () => {
+          const content = await fetchPageContent(productLink.url)
           if (!content) return null
-          const parsed = await extractProductData(content, source.retailerSlug)
+          const parsed = await extractProductData(content.markdown, source.retailerSlug)
           if (!parsed) return null
-          return { ...parsed, url: productUrl }
+          const imageUrl = findMainProductImage(content.images, source.retailerSlug)
+          return { ...parsed, url: productLink.url, imageUrl }
         })
 
         if (!productData) continue

@@ -1,0 +1,1 @@
+import { db } from './src/db/index.js'; import { retailers } from './src/db/schema.js'; const [r] = await db.insert(retailers).values({ name: 'PB Tech', slug: 'pbtech', websiteUrl: 'https://www.pbtech.com/au', logoUrl: '/logos/pbtech.png', isActive: true }).returning(); console.log('Added PB Tech:', r); process.exit(0);
