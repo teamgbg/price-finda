@@ -60,41 +60,48 @@ function parseSpecs(name) {
     specs.screenSize = screenMatch[1] + '"'
   }
 
-  // RAM
-  const ramMatch = name.match(/(\d+)\s*GB(?:\s*RAM)?/i)
-  if (ramMatch) {
-    const ram = parseInt(ramMatch[1])
-    if (ram <= 32) specs.ram = ram
-  }
+  // RAM/Storage pattern like "4/64GB" or "8/128GB"
+  const ramStorageMatch = name.match(/(\d+)\/(\d+)\s*GB/i)
+  if (ramStorageMatch) {
+    specs.ram = parseInt(ramStorageMatch[1])
+    specs.storage = parseInt(ramStorageMatch[2])
+  } else {
+    // Explicit RAM like "4GB RAM" or "8GB DDR"
+    const ramMatch = name.match(/(\d+)\s*GB\s*(?:RAM|DDR|memory)/i)
+    if (ramMatch) {
+      specs.ram = parseInt(ramMatch[1])
+    }
 
-  // Storage
-  const storageMatch = name.match(/(\d+)\s*GB\s*(eMMC|SSD)?/gi)
-  if (storageMatch) {
-    for (const match of storageMatch) {
-      const m = match.match(/(\d+)\s*GB\s*(eMMC|SSD)?/i)
-      if (m) {
-        const size = parseInt(m[1])
-        if (size >= 32 && size <= 1024) {
-          specs.storage = size
-          specs.storageType = m[2]?.toUpperCase() || 'eMMC'
-        }
-      }
+    // Storage with type
+    const storageMatch = name.match(/(\d+)\s*GB\s*(eMMC|SSD)/i)
+    if (storageMatch) {
+      specs.storage = parseInt(storageMatch[1])
+      specs.storageType = storageMatch[2].toUpperCase()
     }
   }
 
-  // Processor
+  // Storage type if not already set
+  if (specs.storage && !specs.storageType) {
+    if (/eMMC/i.test(name)) specs.storageType = 'eMMC'
+    else if (/SSD/i.test(name)) specs.storageType = 'SSD'
+    else specs.storageType = 'eMMC'
+  }
+
+  // Processor - order matters (more specific first)
   const procPatterns = [
-    /\b(Celeron[- ]?N?\d*)\b/i,
-    /\b(N\d{3,4})\b/i,
-    /\b(Kompanio[- ]?\d+)\b/i,
-    /\b(MediaTek[- ]?\w+)\b/i,
-    /\b(Core[- ]?i\d)\b/i,
-    /\b(Pentium[- ]?\w+)\b/i,
+    { pattern: /\bIntel\s*(Core[- ]?i\d+)/i, name: (m) => m[1] },
+    { pattern: /\b(Core[- ]?i\d+)/i, name: (m) => m[1] },
+    { pattern: /\b(Celeron[- ]?N?\d*)/i, name: (m) => m[1] },
+    { pattern: /\b(N\d{3,4})\b/i, name: (m) => `Intel ${m[1]}` }, // N100, N200, N4500
+    { pattern: /\b(Kompanio[- ]?\d+)/i, name: (m) => `MediaTek ${m[1]}` },
+    { pattern: /\bMediaTek\s*(\w+)/i, name: (m) => `MediaTek ${m[1]}` },
+    { pattern: /\bSD\s*(\d+c?\s*Gen\s*\d)/i, name: (m) => `Snapdragon ${m[1]}` },
+    { pattern: /\b(Pentium[- ]?\w+)/i, name: (m) => m[1] },
   ]
-  for (const pattern of procPatterns) {
+  for (const { pattern, name: getName } of procPatterns) {
     const match = name.match(pattern)
     if (match) {
-      specs.processor = match[1]
+      specs.processor = getName(match)
       break
     }
   }
@@ -128,101 +135,88 @@ async function scrapeRetailer(browser, retailerKey) {
 
     const products = await page.evaluate((retailerKey) => {
       const results = []
-      const text = document.body.innerText
-      const lines = text.split('\n').map(l => l.trim()).filter(l => l)
+      const main = document.querySelector('main') || document.body
 
-      // Find products by looking for price + name patterns
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i]
+      // Find all product links containing "Chromebook" in the URL or text
+      const productLinks = Array.from(main.querySelectorAll('a[href*="/p/"]'))
+        .filter(link => {
+          const text = link.textContent || ''
+          return /chromebook/i.test(text) && text.length > 20
+        })
 
-        // Price pattern
-        const priceMatch = line.match(/^\$(\d+(?:\.\d{2})?)$/)
-        if (priceMatch) {
-          const price = parseFloat(priceMatch[1])
-          if (price >= 150 && price <= 2000) {
-            // Look for product name in next few lines
-            for (let j = 1; j <= 3; j++) {
-              if (i + j < lines.length) {
-                const nameLine = lines[i + j]
-                // Must contain Chromebook, have specs (RAM/storage), be reasonable length
-                const isProductName = nameLine.length > 20 &&
-                    nameLine.length < 200 &&
-                    (nameLine.includes('Chromebook') || nameLine.includes('chromebook')) &&
-                    !nameLine.includes('$') &&
-                    // Must have spec-like content (numbers for RAM/storage)
-                    /\d+GB|\d+\/\d+|\d{1,2}["″-]?(?:inch)?/i.test(nameLine)
+      // Dedupe by href
+      const seen = new Set()
+      const uniqueLinks = productLinks.filter(link => {
+        if (seen.has(link.href)) return false
+        seen.add(link.href)
+        return true
+      })
 
-                if (isProductName) {
-                  results.push({
-                    name: nameLine,
-                    price: price,
-                  })
-                  break
-                }
-              }
-            }
+      for (const link of uniqueLinks) {
+        const name = link.textContent?.trim()
+        if (!name || name.length < 20) continue
+
+        // Find closest parent that might be a product card
+        let card = link.closest('div')
+        let attempts = 0
+        while (card && attempts < 5) {
+          const cardText = card.innerText || ''
+          // A valid card should have price and be reasonably sized
+          if (/\$\d+/.test(cardText) && cardText.length < 800) break
+          card = card.parentElement?.closest('div')
+          attempts++
+        }
+
+        if (!card) card = link.parentElement
+
+        // Extract price from the card
+        const cardText = card?.innerText || ''
+        const prices = cardText.match(/\$(\d+(?:\.\d{2})?)/g) || []
+        let price = null
+
+        // Find a reasonable price (not $0, $1, or too high)
+        for (const p of prices) {
+          const val = parseFloat(p.replace('$', ''))
+          if (val >= 100 && val <= 2500) {
+            price = val
+            break
           }
+        }
+
+        // Check stock status
+        const isUnavailable = /unavailable|out of stock|sold out/i.test(cardText)
+
+        // Find image
+        let imageUrl = null
+        const img = card?.querySelector('img[src*="http"]')
+        if (img && !img.src.includes('logo') && !img.src.includes('icon')) {
+          imageUrl = img.src
+        }
+
+        if (price && name) {
+          results.push({
+            name,
+            price,
+            url: link.href,
+            imageUrl,
+            inStock: !isUnavailable,
+          })
         }
       }
 
-      // Check for "Unavailable" or "Out of Stock" near each product
-      for (const product of results) {
-        const nameIndex = lines.findIndex(l => l === product.name)
-        if (nameIndex !== -1) {
-          // Check next 5 lines for stock status
-          for (let k = 1; k <= 5; k++) {
-            if (nameIndex + k < lines.length) {
-              const checkLine = lines[nameIndex + k].toLowerCase()
-              if (checkLine.includes('unavailable') || checkLine.includes('out of stock')) {
-                product.inStock = false
-                break
-              }
-            }
-          }
-        }
-        if (product.inStock === undefined) product.inStock = true
-      }
-
-      // Extract URLs
-      const links = Array.from(document.querySelectorAll('a[href]'))
-      for (const product of results) {
-        const nameWords = product.name.toLowerCase().split(/\s+/).slice(0, 5)
-        for (const link of links) {
-          const href = link.href
-          const text = link.textContent?.toLowerCase() || ''
-          if (href.includes('/p/') || href.includes('sku-')) {
-            if (nameWords.some(w => w.length > 3 && text.includes(w))) {
-              product.url = href
-              break
-            }
-          }
-        }
-      }
-
-      // Extract images
-      const images = Array.from(document.querySelectorAll('img[src]'))
-      for (const product of results) {
-        const nameWords = product.name.toLowerCase().split(/\s+/).slice(0, 3)
-        for (const img of images) {
-          const alt = img.alt?.toLowerCase() || ''
-          const src = img.src
-          if (src.includes('http') && !src.includes('logo') && !src.includes('icon')) {
-            if (nameWords.some(w => w.length > 3 && alt.includes(w))) {
-              product.imageUrl = src
-              break
-            }
-          }
-        }
-      }
-
-      return results
+      return { results, containerUsed: main.tagName, totalLinks: uniqueLinks.length }
     }, retailerKey)
 
-    console.log(`Found ${products.length} products`)
-    products.forEach(p => console.log(`  $${p.price} - ${p.name.slice(0, 60)}...`))
+    console.log(`Container: <${products.containerUsed}>, Links found: ${products.totalLinks}`)
+    console.log(`Products with valid prices: ${products.results.length}`)
+    products.results.forEach(p => {
+      const stockStatus = p.inStock ? '✓' : '✗'
+      const imgStatus = p.imageUrl ? '📷' : ''
+      console.log(`  ${stockStatus} $${p.price} ${imgStatus} - ${p.name.slice(0, 50)}...`)
+    })
 
     await page.close()
-    return products
+    return products.results
 
   } catch (err) {
     console.error(`Error scraping ${config.name}:`, err.message)
