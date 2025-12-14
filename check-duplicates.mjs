@@ -1,56 +1,72 @@
-import * as dotenv from 'dotenv'
-dotenv.config({ path: '.env.local' })
+import { config } from 'dotenv'
+config({ path: '.env.local' })
+
 import { drizzle } from 'drizzle-orm/neon-http'
 import { neon } from '@neondatabase/serverless'
-import { sql } from 'drizzle-orm'
+import { products, retailerListings, retailers, brands } from './src/db/schema.ts'
+import { eq } from 'drizzle-orm'
 
-const client = neon(process.env.DATABASE_URL)
-const db = drizzle(client)
+const sqlClient = neon(process.env.DATABASE_URL)
+const db = drizzle(sqlClient)
 
-// Check for potential duplicates by looking at similar product specs
-const products = await db.execute(sql`
-  SELECT p.id, p.name, p.ram, p.storage, p.processor, p.screen_size,
-         b.name as brand,
-         array_agg(DISTINCT r.name) as retailers
-  FROM products p
-  JOIN brands b ON b.id = p.brand_id
-  LEFT JOIN retailer_listings rl ON rl.product_id = p.id
-  LEFT JOIN retailers r ON r.id = rl.retailer_id
-  GROUP BY p.id, p.name, p.ram, p.storage, p.processor, p.screen_size, b.name
-  ORDER BY b.name, p.ram, p.storage, p.processor
-`)
+console.log('=== Checking for Duplicate Products ===\n')
 
-console.log('All products by brand/specs:')
-console.log('===========================')
+// Get all products with brand names
+const allProducts = await db.select({
+  id: products.id,
+  name: products.name,
+  brand: brands.name,
+  screenSize: products.screenSize,
+  ram: products.ram,
+  storage: products.storage,
+  processor: products.processor,
+}).from(products)
+  .leftJoin(brands, eq(products.brandId, brands.id))
 
-// Group by key specs to find potential duplicates
-const byKey = new Map()
-for (const p of products.rows) {
-  // Create a key based on brand + key specs
-  const key = `${p.brand}-${p.ram}GB-${p.storage}GB-${p.screen_size}`
-  if (!byKey.has(key)) {
-    byKey.set(key, [])
-  }
-  byKey.get(key).push(p)
+// Group by key specs (brand + screen + ram + storage)
+const groups = {}
+for (const p of allProducts) {
+  const key = [p.brand, p.screenSize, p.ram, p.storage].join('|')
+  if (!groups[key]) groups[key] = []
+  groups[key].push(p)
 }
 
-// Show potential duplicates
-let duplicateCount = 0
-for (const [key, prods] of byKey) {
-  if (prods.length > 1) {
-    duplicateCount++
-    console.log(`\n⚠️  POTENTIAL DUPLICATES (${key}):`)
+// Find duplicates
+const duplicateGroups = Object.entries(groups).filter(([_, prods]) => prods.length > 1)
+
+if (duplicateGroups.length === 0) {
+  console.log('No duplicate products found!\n')
+} else {
+  console.log('Found', duplicateGroups.length, 'potential duplicate groups:\n')
+
+  for (const [key, prods] of duplicateGroups) {
+    const [brand, screen, ram, storage] = key.split('|')
+    console.log('\n--- ' + brand + ' ' + screen + ' ' + ram + 'GB/' + storage + 'GB ---')
+
     for (const p of prods) {
-      console.log(`   - ${p.name}`)
-      console.log(`     Processor: ${p.processor}`)
-      console.log(`     Retailers: ${p.retailers?.join(', ') || 'none'}`)
+      const listings = await db.select({
+        retailerName: retailers.name,
+        price: retailerListings.currentPriceCents,
+        inStock: retailerListings.inStock,
+      })
+        .from(retailerListings)
+        .innerJoin(retailers, eq(retailerListings.retailerId, retailers.id))
+        .where(eq(retailerListings.productId, p.id))
+
+      const listingInfo = listings.map(l => {
+        const stockStatus = l.inStock ? '' : ' (out)'
+        return l.retailerName + ': $' + (l.price/100) + stockStatus
+      }).join(', ')
+
+      console.log('  [' + p.id + '] ' + p.name.slice(0, 60) + '...')
+      console.log('       Processor: ' + (p.processor || 'N/A'))
+      console.log('       Listings: ' + listingInfo)
     }
   }
 }
 
-if (duplicateCount === 0) {
-  console.log('\n✓ No potential duplicates found!')
-}
-
-console.log(`\nTotal products: ${products.rows.length}`)
-console.log(`Potential duplicate groups: ${duplicateCount}`)
+// Print summary
+console.log('\n=== Summary ===')
+console.log('Total products:', allProducts.length)
+const allListings = await db.select().from(retailerListings)
+console.log('Total listings:', allListings.length)

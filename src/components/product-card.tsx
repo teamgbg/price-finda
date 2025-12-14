@@ -1,12 +1,21 @@
 'use client'
 
-import { TrendingDown, TrendingUp, Monitor, HardDrive, MemoryStick, Cpu, Battery, Weight, Usb, Keyboard, Wifi, Gauge, Sun } from 'lucide-react'
+import { TrendingDown, TrendingUp, Monitor, HardDrive, MemoryStick, Cpu, Battery, Weight, Usb, Keyboard, Wifi, Gauge, Sun, Laptop } from 'lucide-react'
 import { cn, formatPrice } from '@/lib/utils'
 import type { ProductWithListings } from '@/lib/queries'
 
 interface ProductCardProps {
   product: ProductWithListings
   viewMode: 'grid' | 'list'
+}
+
+// Placeholder component for missing images
+function ImagePlaceholder() {
+  return (
+    <div className="w-full h-full flex items-center justify-center bg-slate-100">
+      <Laptop className="w-12 h-12 text-slate-300" />
+    </div>
+  )
 }
 
 // Uniform styling for retailer buttons - green highlight for cheapest
@@ -63,7 +72,11 @@ export function ProductCard({ product, viewMode }: ProductCardProps) {
       <div className="bg-white rounded-xl border border-slate-200 p-4 flex gap-4 shadow-sm hover:shadow-md transition-shadow">
         {/* Image */}
         <div className="w-32 h-24 shrink-0 rounded-lg overflow-hidden bg-slate-100">
-          <img src={product.imageUrl || ''} alt={product.name} className="w-full h-full object-contain" />
+          {product.imageUrl ? (
+            <img src={product.imageUrl} alt={product.name} className="w-full h-full object-contain" />
+          ) : (
+            <ImagePlaceholder />
+          )}
         </div>
 
         {/* Details */}
@@ -205,11 +218,15 @@ export function ProductCard({ product, viewMode }: ProductCardProps) {
       <div className="flex">
         {/* Image */}
         <div className="w-36 h-32 shrink-0 bg-slate-50 overflow-hidden">
-          <img
-            src={product.imageUrl || ''}
-            alt={product.name}
-            className="w-full h-full object-contain"
-          />
+          {product.imageUrl ? (
+            <img
+              src={product.imageUrl}
+              alt={product.name}
+              className="w-full h-full object-contain"
+            />
+          ) : (
+            <ImagePlaceholder />
+          )}
         </div>
 
         {/* Specs */}

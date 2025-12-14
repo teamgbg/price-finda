@@ -60,19 +60,46 @@ function parseSpecs(name) {
     specs.screenSize = screenMatch[1] + '"'
   }
 
-  // RAM/Storage pattern like "4/64GB" or "8/128GB"
-  const ramStorageMatch = name.match(/(\d+)\/(\d+)\s*GB/i)
-  if (ramStorageMatch) {
-    specs.ram = parseInt(ramStorageMatch[1])
-    specs.storage = parseInt(ramStorageMatch[2])
-  } else {
-    // Explicit RAM like "4GB RAM" or "8GB DDR"
+  // RAM/Storage patterns - multiple formats:
+  // Harvey Norman: "N4500/4GB/64GB eMMC" → XGB/YGB format
+  // Officeworks: "Celeron 4/64GB" or "8/128GB" → X/YGB format
+
+  // Try XGB/YGB format first (Harvey Norman style)
+  const ramStorageGBMatch = name.match(/(\d+)GB\/(\d+)(?:GB)?(?:\s*eMMC|\s*SSD)?/i)
+  if (ramStorageGBMatch) {
+    const first = parseInt(ramStorageGBMatch[1])
+    const second = parseInt(ramStorageGBMatch[2])
+    // First number is RAM (small), second is storage (larger)
+    if (first <= 16 && second >= 32) {
+      specs.ram = first
+      specs.storage = second
+    }
+  }
+
+  // Try X/YGB format (Officeworks style) - only if not already set
+  if (!specs.ram || !specs.storage) {
+    const ramStorageMatch = name.match(/\b(\d{1,2})\/(\d{2,3})(?:GB)?/i)
+    if (ramStorageMatch) {
+      const first = parseInt(ramStorageMatch[1])
+      const second = parseInt(ramStorageMatch[2])
+      // Validate: RAM should be small (4-16), storage should be larger (32-512)
+      if (first <= 16 && first >= 2 && second >= 32 && second <= 512) {
+        specs.ram = first
+        specs.storage = second
+      }
+    }
+  }
+
+  // Fallback: Explicit RAM like "4GB RAM" or "8GB DDR"
+  if (!specs.ram) {
     const ramMatch = name.match(/(\d+)\s*GB\s*(?:RAM|DDR|memory)/i)
     if (ramMatch) {
       specs.ram = parseInt(ramMatch[1])
     }
+  }
 
-    // Storage with type
+  // Fallback: Storage with type "64GB eMMC" or "128GB SSD"
+  if (!specs.storage) {
     const storageMatch = name.match(/(\d+)\s*GB\s*(eMMC|SSD)/i)
     if (storageMatch) {
       specs.storage = parseInt(storageMatch[1])
@@ -137,12 +164,27 @@ async function scrapeRetailer(browser, retailerKey) {
       const results = []
       const main = document.querySelector('main') || document.body
 
-      // Find all product links containing "Chromebook" in the URL or text
-      const productLinks = Array.from(main.querySelectorAll('a[href*="/p/"]'))
-        .filter(link => {
-          const text = link.textContent || ''
-          return /chromebook/i.test(text) && text.length > 20
-        })
+      // Find all product links - different patterns for different retailers
+      // Officeworks: /p/ in URL
+      // Harvey Norman: product links with chromebook in text
+      const allLinks = Array.from(main.querySelectorAll('a[href]'))
+      const productLinks = allLinks.filter(link => {
+        const href = link.href || ''
+        const text = link.textContent || ''
+        const isChromebook = /chromebook/i.test(text) && text.length > 20
+
+        // Officeworks pattern
+        if (href.includes('/p/') && isChromebook) return true
+
+        // Harvey Norman pattern - product URLs are like /product-name-here
+        // Exclude category pages and filter/sort URLs
+        if (href.includes('harveynorman.com.au') && isChromebook &&
+            !href.includes('/computers-tablets/computers/chromebooks?') &&
+            !href.includes('?') &&
+            !href.endsWith('/chromebooks')) return true
+
+        return false
+      })
 
       // Dedupe by href
       const seen = new Set()
